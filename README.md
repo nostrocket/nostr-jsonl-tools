@@ -2,6 +2,18 @@
 
 This Go script parses Nostr events from a JSONL file and builds a recursive graph of followers starting from a specified pubkey.
 
+## Project Structure
+
+```
+.
+├── cmd/
+│   └── follow-graph/     # Main command-line tool
+├── pkg/
+│   └── nostr/            # Core functionality for Nostr follow graph
+├── README.md
+└── go.mod
+```
+
 ## Requirements
 
 - Go 1.18 or higher
@@ -10,19 +22,27 @@ This Go script parses Nostr events from a JSONL file and builds a recursive grap
 ## Installation
 
 ```bash
+# Install dependencies
 go mod tidy
+
+# Build the binary
+go build -o follow-graph ./cmd/follow-graph
 ```
 
 ## Usage
 
 ```bash
-go run main.go <jsonl_file> <root_pubkey>
+# Run without building
+go run ./cmd/follow-graph/main.go <jsonl_file> <root_pubkey>
+
+# Or build and run the binary
+./follow-graph <jsonl_file> <root_pubkey>
 ```
 
 Or with named flags:
 
 ```bash
-go run main.go -file <jsonl_file> -pubkey <root_pubkey> [-json] [-npub] [-max-depth <depth>] [-stats] [-output <file>] [-list]
+./follow-graph -file <jsonl_file> -pubkey <root_pubkey> [-json] [-npub] [-max-depth <depth>] [-stats] [-output <file>] [-list]
 ```
 
 Where:
@@ -43,28 +63,28 @@ Where:
 
 ```bash
 # Basic usage
-go run main.go sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p
+./follow-graph sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p
 
 # Display pubkeys in npub format
-go run main.go sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -npub
+./follow-graph sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -npub
 
 # Output as JSON
-go run main.go sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -json
+./follow-graph sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -json
 
 # Limit recursion depth
-go run main.go sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -max-depth 2
+./follow-graph sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -max-depth 2
 
 # Show graph statistics
-go run main.go sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -stats
+./follow-graph sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -stats
 
 # Output to a file (will use appropriate extension)
-go run main.go sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -output results
+./follow-graph sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -output results
 
 # Process a large file and output JSON to a file
-go run main.go -file large_events.jsonl -pubkey npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -json -output results
+./follow-graph -file large_events.jsonl -pubkey npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -json -output results
 
 # Output a line-separated list of pubkeys
-go run main.go sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -list -output pubkeys
+./follow-graph sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -list -output pubkeys
 ```
 
 ## How it Works
@@ -84,6 +104,8 @@ go run main.go sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hq
 - Allows limiting the recursion depth for large graphs
 - Shows graph statistics (total nodes, node with most following)
 - Handles cycles in the graph to prevent infinite recursion
+- Can output results to a file instead of stdout
+- Can output a line-separated list of unique pubkeys
 
 ## Output Format
 
