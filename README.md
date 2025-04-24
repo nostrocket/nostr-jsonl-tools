@@ -1,13 +1,14 @@
 # Nostr Follow Graph
 
-This Go script parses Nostr events from a JSONL file and builds a recursive graph of followers starting from a specified pubkey.
+This Go project provides tools for working with Nostr events, extracting pubkeys, and building follow graphs from JSONL files.
 
 ## Project Structure
 
 ```
 .
 ├── cmd/
-│   ├── follow-graph/     # Main command-line tool for building follow graphs
+│   ├── follow-graph/     # Tool for building follow graphs
+│   ├── extract-pubkeys/  # Tool for extracting all pubkeys from events
 │   └── dedup/            # Tool for deduplicating pubkey lists
 ├── pkg/
 │   └── nostr/            # Core functionality for Nostr follow graph
@@ -29,6 +30,9 @@ go mod tidy
 # Build the follow-graph tool
 go build -o follow-graph ./cmd/follow-graph
 
+# Build the extract-pubkeys tool
+go build -o extract-pubkeys ./cmd/extract-pubkeys
+
 # Build the deduplication tool
 go build -o dedup ./cmd/dedup
 ```
@@ -37,15 +41,7 @@ go build -o dedup ./cmd/dedup
 
 ### Follow Graph Tool
 
-```bash
-# Run without building
-go run ./cmd/follow-graph/main.go <jsonl_file> <root_pubkey>
-
-# Or build and run the binary
-./follow-graph <jsonl_file> <root_pubkey>
-```
-
-Or with named flags:
+The follow-graph tool builds a recursive graph of followers starting from a specified pubkey.
 
 ```bash
 ./follow-graph -file <jsonl_file> -pubkey <root_pubkey> [-json] [-npub] [-max-depth <depth>] [-stats] [-output <file>] [-list]
@@ -64,6 +60,29 @@ Where:
 **Note**: When using the `-output` flag, the script will automatically use the appropriate file extension based on the output format:
 - `.json` for JSON output (when using `-json`)
 - `.txt` for line-separated list output (when using `-list`)
+
+#### Recent Improvements:
+- Pubkey validation to ensure only valid 32-byte hex strings are included
+- Sorting and deduplication of pubkeys in the output
+- Statistics on valid and invalid pubkeys
+
+### Extract Pubkeys Tool
+
+The extract-pubkeys tool extracts all valid pubkeys directly from the "pubkey" field of each Nostr event in a JSONL file.
+
+```bash
+./extract-pubkeys -file <jsonl_file> [-output <file>]
+```
+
+Where:
+- `<jsonl_file>` is the path to a JSONL file containing Nostr events
+- `-output` (optional) specifies the output file (defaults to "output.txt" if not provided)
+
+The tool:
+- Extracts pubkeys from the "pubkey" field of each event (the author of the event)
+- Validates each pubkey to ensure it's a valid 32-byte hex string
+- Removes duplicates and sorts the output
+- Provides statistics on the number of valid and invalid pubkeys found
 
 ### Deduplication Tool
 
@@ -84,68 +103,30 @@ Where:
 - `-input` (optional) specifies the input file containing pubkeys (defaults to results.txt)
 - `-output` (optional) specifies the output file (defaults to input-dedup.txt if not provided)
 
-## Example
+## Examples
+
+### Follow Graph Tool
 
 ```bash
-# Basic usage
-./follow-graph sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p
+# Get a list of all pubkeys in the follow graph, starting from a specific user
+./follow-graph -file events.jsonl -pubkey npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -list -output followers
 
-# Display pubkeys in npub format
-./follow-graph sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -npub
+# Generate a JSON representation of the follow graph with a depth limit of 2
+./follow-graph -file events.jsonl -pubkey npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -json -max-depth 2 -output graph
+```
 
-# Output as JSON
-./follow-graph sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -json
+### Extract Pubkeys Tool
 
-# Limit recursion depth
-./follow-graph sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -max-depth 2
+```bash
+# Extract all pubkeys from events and save to the default output.txt
+./extract-pubkeys -file events.jsonl
 
-# Show graph statistics
-./follow-graph sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -stats
+# Extract all pubkeys and save to a custom file
+./extract-pubkeys -file events.jsonl -output all-authors.txt
+```
 
-# Output to a file (will use appropriate extension)
-./follow-graph sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -output results
+### Deduplication Tool
 
-# Process a large file and output JSON to a file
-./follow-graph -file large_events.jsonl -pubkey npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -json -output results
-
-# Output a line-separated list of pubkeys
-./follow-graph sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -list -output pubkeys
-
-# Deduplicate a pubkey list
+```bash
+# Deduplicate a list of pubkeys
 ./dedup -input pubkeys.txt -output unique-pubkeys.txt
-```
-
-## How it Works
-
-1. The script reads a JSONL file containing Nostr events
-2. It filters for kind 3 events (contact lists)
-3. For each contact list, it extracts the pubkey and its followed pubkeys (p tags)
-4. It builds a graph of followers
-5. Finally, it prints the recursive graph starting from the specified root pubkey
-
-## Features
-
-- Handles large JSONL files with a 10MB buffer size
-- Supports both hex and npub format pubkeys
-- Can output the graph in JSON format
-- Provides progress updates when processing large files
-- Allows limiting the recursion depth for large graphs
-- Shows graph statistics (total nodes, node with most following)
-- Handles cycles in the graph to prevent infinite recursion
-- Can output results to a file instead of stdout
-- Can output a line-separated list of unique pubkeys
-- Includes a tool for deduplicating pubkey lists
-
-## Output Format
-
-The output is a tree-like structure showing the follow relationships:
-```
-rootPubkey (X following)
-  followedPubkey1
-    followedByPubkey1-1
-    followedByPubkey1-2
-  followedPubkey2
-    ...
-```
-
-Note: The script handles cycles in the graph to prevent infinite recursion.
