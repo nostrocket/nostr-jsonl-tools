@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -210,6 +211,9 @@ func (g *Graph) ExportPubkeyList(rootPubkey string, maxDepth int) ([]byte, error
 			invalidCount++
 		}
 	}
+
+	// Sort the pubkeys for consistent output
+	sort.Strings(validPubkeys)
 
 	// Convert the valid pubkeys to a line-separated list
 	var result strings.Builder
