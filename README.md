@@ -7,7 +7,8 @@ This Go script parses Nostr events from a JSONL file and builds a recursive grap
 ```
 .
 ├── cmd/
-│   └── follow-graph/     # Main command-line tool
+│   ├── follow-graph/     # Main command-line tool for building follow graphs
+│   └── dedup/            # Tool for deduplicating pubkey lists
 ├── pkg/
 │   └── nostr/            # Core functionality for Nostr follow graph
 ├── README.md
@@ -25,11 +26,16 @@ This Go script parses Nostr events from a JSONL file and builds a recursive grap
 # Install dependencies
 go mod tidy
 
-# Build the binary
+# Build the follow-graph tool
 go build -o follow-graph ./cmd/follow-graph
+
+# Build the deduplication tool
+go build -o dedup ./cmd/dedup
 ```
 
 ## Usage
+
+### Follow Graph Tool
 
 ```bash
 # Run without building
@@ -53,11 +59,30 @@ Where:
 - `-max-depth` (optional) limits the recursion depth for large graphs
 - `-stats` (optional) shows graph statistics (total nodes, node with most following)
 - `-output` (optional) writes output to the specified file instead of stdout
-- `-list` (optional) outputs a line-separated list of unique pubkeys in the graph
+- `-list` (optional) outputs a line-separated list of pubkeys in the graph
 
 **Note**: When using the `-output` flag, the script will automatically use the appropriate file extension based on the output format:
 - `.json` for JSON output (when using `-json`)
 - `.txt` for line-separated list output (when using `-list`)
+
+### Deduplication Tool
+
+The deduplication tool removes duplicate pubkeys from a line-separated list file:
+
+```bash
+# Use default input (results.txt) and output (results-dedup.txt)
+./dedup
+
+# Specify a different input file
+./dedup -input other-pubkeys.txt
+
+# Specify both input and output files
+./dedup -input results.txt -output unique-pubkeys.txt
+```
+
+Where:
+- `-input` (optional) specifies the input file containing pubkeys (defaults to results.txt)
+- `-output` (optional) specifies the output file (defaults to input-dedup.txt if not provided)
 
 ## Example
 
@@ -85,6 +110,9 @@ Where:
 
 # Output a line-separated list of pubkeys
 ./follow-graph sample_events.jsonl npub1mygerccwqpzyh9pvp6pv44rskv40zutkfs38t0hqhkvnwlhagp6s3psn5p -list -output pubkeys
+
+# Deduplicate a pubkey list
+./dedup -input pubkeys.txt -output unique-pubkeys.txt
 ```
 
 ## How it Works
@@ -106,6 +134,7 @@ Where:
 - Handles cycles in the graph to prevent infinite recursion
 - Can output results to a file instead of stdout
 - Can output a line-separated list of unique pubkeys
+- Includes a tool for deduplicating pubkey lists
 
 ## Output Format
 
