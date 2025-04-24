@@ -2,6 +2,7 @@ package nostr
 
 import (
 	"bufio"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -198,12 +199,29 @@ func (g *Graph) ExportPubkeyList(rootPubkey string, maxDepth int) ([]byte, error
 	pubkeys := make(map[string]bool)
 	g.collectPubkeys(node, pubkeys, make(map[string]bool), 0, maxDepth)
 
-	// Convert the map to a line-separated list
-	var result strings.Builder
+	// Validate pubkeys and count statistics
+	var validPubkeys []string
+	var invalidCount int
+
 	for pubkey := range pubkeys {
+		if isValidPubkey(pubkey) {
+			validPubkeys = append(validPubkeys, pubkey)
+		} else {
+			invalidCount++
+		}
+	}
+
+	// Convert the valid pubkeys to a line-separated list
+	var result strings.Builder
+	for _, pubkey := range validPubkeys {
 		result.WriteString(pubkey)
 		result.WriteString("\n")
 	}
+
+	// Print stats to stderr
+	fmt.Fprintf(os.Stderr, "Total unique pubkeys: %d\n", len(pubkeys))
+	fmt.Fprintf(os.Stderr, "Valid pubkeys: %d\n", len(validPubkeys))
+	fmt.Fprintf(os.Stderr, "Invalid pubkeys removed: %d\n", invalidCount)
 
 	return []byte(result.String()), nil
 }
@@ -400,4 +418,16 @@ func DecodeNpubIfNeeded(pubkey string) (string, error) {
 		return decoded.(string), nil
 	}
 	return pubkey, nil
+}
+
+// isValidPubkey checks if a pubkey is valid
+func isValidPubkey(pubkey string) bool {
+	// Check if the length is correct (64 characters for 32 bytes)
+	if len(pubkey) != 64 {
+		return false
+	}
+
+	// Check if it's a valid hex string
+	_, err := hex.DecodeString(pubkey)
+	return err == nil
 }
