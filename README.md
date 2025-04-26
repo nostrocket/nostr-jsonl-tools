@@ -10,6 +10,7 @@ Nostr (Notes and Other Stuff Transmitted by Relays) is a simple, open protocol t
 - **extract-pubkeys**: Extract all unique pubkeys from events in a JSONL file
 - **content-extractor**: Extract and store content from specific authors in a SQLite database
 - **event-filter**: Filter events by author pubkey and save to a new JSONL file
+- **event-splitter**: Split events into separate JSONL files by author pubkey
 - **dedup**: Remove duplicate pubkeys from a list
 
 ## Project Structure
@@ -21,6 +22,7 @@ Nostr (Notes and Other Stuff Transmitted by Relays) is a simple, open protocol t
 │   ├── extract-pubkeys/  # Tool for extracting all pubkeys from events
 │   ├── content-extractor/ # Tool for extracting content from specific pubkeys
 │   ├── event-filter/     # Tool for filtering events by author pubkey
+│   ├── event-splitter/   # Tool for splitting events into files by author
 │   └── dedup/            # Tool for deduplicating pubkey lists
 ├── pkg/
 │   └── nostr/            # Core functionality for Nostr follow graph
@@ -49,6 +51,7 @@ go build -o follow-graph ./cmd/follow-graph
 go build -o extract-pubkeys ./cmd/extract-pubkeys
 go build -o content-extractor ./cmd/content-extractor
 go build -o event-filter ./cmd/event-filter
+go build -o event-splitter ./cmd/event-splitter
 go build -o dedup ./cmd/dedup
 ```
 
@@ -93,6 +96,19 @@ cat important1.txt important2.txt > combined.txt
 # 3. Extract events and content from these VIPs
 ./event-filter -file events.jsonl -pubkeys vips.txt -output vip-events.jsonl
 ./content-extractor -file events.jsonl -pubkeys vips.txt -db vip-content.db
+```
+
+### Organizing Events by Author
+
+```bash
+# Split a large JSONL file into separate files by author
+./event-splitter -file events.jsonl -output-dir authors
+
+# Process specific authors' events individually
+for author in authors/*.jsonl; do
+  # Process each author file separately
+  echo "Processing $author"
+done
 ```
 
 ## Tool Documentation
@@ -183,6 +199,32 @@ The tool:
 - Maintains the original JSONL format
 - Provides progress statistics during processing
 
+### Event Splitter Tool
+
+The event-splitter tool splits events into separate JSONL files by author pubkey.
+
+```bash
+./event-splitter -file <jsonl_file> [-output-dir <output_dir>] [-flush-interval <count>] [-max-open-files <count>]
+```
+
+Where:
+- `<jsonl_file>` is the path to a JSONL file containing Nostr events
+- `-output-dir` (optional) specifies the output directory (defaults to "events-by-author" if not provided)
+- `-flush-interval` (optional) specifies how many events to process before flushing writers (defaults to 1000)
+- `-max-open-files` (optional) specifies the maximum number of files to keep open at once (defaults to 500)
+
+The tool:
+- Processes each event in the JSONL file
+- Only includes events of kind 1 (text notes)
+- Creates a separate JSONL file for each unique author pubkey in the output directory
+- If a file for an author already exists, appends new events to it
+- Maintains the original JSONL format for each event
+- Uses buffered I/O for better performance
+- Periodically flushes data to disk to avoid excessive memory usage
+- Intelligently manages file handles to stay within system limits
+- Provides progress statistics during processing
+- Shows top authors by event count at the end
+
 ### Deduplication Tool
 
 The deduplication tool removes duplicate pubkeys from a line-separated list file:
@@ -242,6 +284,13 @@ Where:
 
 # Filter events and specify a custom output file
 ./event-filter -file events.jsonl -pubkeys vips.txt -output vip_events.jsonl
+```
+
+### Event Splitter Tool
+
+```bash
+# Split events into separate files by author pubkey
+./event-splitter -file events.jsonl -output-dir split-events
 ```
 
 ### Deduplication Tool
