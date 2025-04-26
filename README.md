@@ -1,6 +1,16 @@
-# Nostr Follow Graph
+# Nostr Data Tools
 
-This Go project provides tools for working with Nostr events, extracting pubkeys, and building follow graphs from JSONL files.
+This Go project provides a suite of tools for working with Nostr events stored in JSONL files. The tools enable you to extract pubkeys, build follow graphs, filter events, and extract content from specific authors.
+
+## Overview
+
+Nostr (Notes and Other Stuff Transmitted by Relays) is a simple, open protocol that enables global, decentralized, and censorship-resistant social media. This toolkit helps you analyze and work with Nostr event data by providing specialized tools for different tasks:
+
+- **follow-graph**: Build recursive graphs of followers starting from a specified pubkey
+- **extract-pubkeys**: Extract all unique pubkeys from events in a JSONL file
+- **content-extractor**: Extract and store content from specific authors in a SQLite database
+- **event-filter**: Filter events by author pubkey and save to a new JSONL file
+- **dedup**: Remove duplicate pubkeys from a list
 
 ## Project Structure
 
@@ -9,6 +19,8 @@ This Go project provides tools for working with Nostr events, extracting pubkeys
 ├── cmd/
 │   ├── follow-graph/     # Tool for building follow graphs
 │   ├── extract-pubkeys/  # Tool for extracting all pubkeys from events
+│   ├── content-extractor/ # Tool for extracting content from specific pubkeys
+│   ├── event-filter/     # Tool for filtering events by author pubkey
 │   └── dedup/            # Tool for deduplicating pubkey lists
 ├── pkg/
 │   └── nostr/            # Core functionality for Nostr follow graph
@@ -20,24 +32,70 @@ This Go project provides tools for working with Nostr events, extracting pubkeys
 
 - Go 1.18 or higher
 - [github.com/nbd-wtf/go-nostr](https://github.com/nbd-wtf/go-nostr) package
+- [github.com/mattn/go-sqlite3](https://github.com/mattn/go-sqlite3) package (for content-extractor)
 
 ## Installation
 
 ```bash
+# Clone the repository
+git clone https://github.com/yourusername/nostr-data-tools.git
+cd nostr-data-tools
+
 # Install dependencies
 go mod tidy
 
-# Build the follow-graph tool
+# Build all tools
 go build -o follow-graph ./cmd/follow-graph
-
-# Build the extract-pubkeys tool
 go build -o extract-pubkeys ./cmd/extract-pubkeys
-
-# Build the deduplication tool
+go build -o content-extractor ./cmd/content-extractor
+go build -o event-filter ./cmd/event-filter
 go build -o dedup ./cmd/dedup
 ```
 
-## Usage
+## Common Workflows
+
+Here are some common workflows that combine multiple tools:
+
+### Extracting Content from All Events
+
+```bash
+# 1. Extract all unique pubkeys from the events
+./extract-pubkeys -file events.jsonl -output all-pubkeys.txt
+
+# 2. Extract content from these pubkeys
+./content-extractor -file events.jsonl -pubkeys all-pubkeys.txt -db all-content.db
+```
+
+### Analyzing a User's Network
+
+```bash
+# 1. Build a follow graph starting from a specific user
+./follow-graph -file events.jsonl -pubkey <user_npub> -list -output network.txt
+
+# 2. Deduplicate the list of pubkeys
+./dedup -input network.txt -output network-dedup.txt
+
+# 3. Extract all events from users in this network
+./event-filter -file events.jsonl -pubkeys network-dedup.txt -output network-events.jsonl
+```
+
+### Creating a Dataset of Important Users
+
+```bash
+# 1. Build a follow graph of users followed by multiple important accounts
+./follow-graph -file events.jsonl -pubkey <important_user1> -list -output important1.txt
+./follow-graph -file events.jsonl -pubkey <important_user2> -list -output important2.txt
+
+# 2. Combine and deduplicate the lists
+cat important1.txt important2.txt > combined.txt
+./dedup -input combined.txt -output vips.txt
+
+# 3. Extract events and content from these VIPs
+./event-filter -file events.jsonl -pubkeys vips.txt -output vip-events.jsonl
+./content-extractor -file events.jsonl -pubkeys vips.txt -db vip-content.db
+```
+
+## Tool Documentation
 
 ### Follow Graph Tool
 
@@ -84,6 +142,47 @@ The tool:
 - Removes duplicates and sorts the output
 - Provides statistics on the number of valid and invalid pubkeys found
 
+### Content Extractor Tool
+
+The content-extractor tool extracts content from Nostr events for specific pubkeys and stores it in a SQLite database.
+
+```bash
+./content-extractor -file <jsonl_file> -pubkeys <pubkeys_file> [-db <database_file>]
+```
+
+Where:
+- `<jsonl_file>` is the path to a JSONL file containing Nostr events
+- `<pubkeys_file>` is a file containing line-separated pubkeys to filter by
+- `-db` (optional) specifies the SQLite database file (defaults to "nostr_content.db" if not provided)
+
+The tool:
+- Loads a list of pubkeys to filter by from the specified file
+- Processes each event in the JSONL file
+- If the event's pubkey matches one in the filter list, extracts the content
+- Stores the content in a SQLite database, appending new content to existing entries
+- Tracks event count and last updated timestamp for each pubkey
+- Provides progress statistics during processing
+
+### Event Filter Tool
+
+The event-filter tool extracts complete Nostr events for specific pubkeys and saves them to a new JSONL file.
+
+```bash
+./event-filter -file <jsonl_file> -pubkeys <pubkeys_file> [-output <output_file>]
+```
+
+Where:
+- `<jsonl_file>` is the path to a JSONL file containing Nostr events
+- `<pubkeys_file>` is a file containing line-separated pubkeys to filter by
+- `-output` (optional) specifies the output JSONL file (defaults to "filtered-events.jsonl" if not provided)
+
+The tool:
+- Loads a list of pubkeys to filter by from the specified file
+- Processes each event in the JSONL file
+- If the event's pubkey matches one in the filter list, copies the entire event to the output file
+- Maintains the original JSONL format
+- Provides progress statistics during processing
+
 ### Deduplication Tool
 
 The deduplication tool removes duplicate pubkeys from a line-separated list file:
@@ -125,8 +224,45 @@ Where:
 ./extract-pubkeys -file events.jsonl -output all-authors.txt
 ```
 
+### Content Extractor Tool
+
+```bash
+# Extract content for a list of pubkeys and store in the default database
+./content-extractor -file events.jsonl -pubkeys interesting-users.txt
+
+# Extract content and specify a custom database file
+./content-extractor -file events.jsonl -pubkeys vips.txt -db vip_content.db
+```
+
+### Event Filter Tool
+
+```bash
+# Filter events by author pubkey and save to the default output file
+./event-filter -file events.jsonl -pubkeys interesting-users.txt
+
+# Filter events and specify a custom output file
+./event-filter -file events.jsonl -pubkeys vips.txt -output vip_events.jsonl
+```
+
 ### Deduplication Tool
 
 ```bash
 # Deduplicate a list of pubkeys
 ./dedup -input pubkeys.txt -output unique-pubkeys.txt
+```
+
+## Performance Considerations
+
+- All tools are designed to handle large JSONL files efficiently
+- Each tool uses a 10MB buffer for reading files to handle large events
+- Progress reporting is provided for long-running operations
+- The content-extractor uses SQLite transactions for better performance
+- Deduplication is performed using maps for O(1) lookup time
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.

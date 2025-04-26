@@ -2,10 +2,12 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 )
@@ -57,9 +59,6 @@ func main() {
 	fileSize := fileInfo.Size()
 	fmt.Printf("Processing file %s (%d bytes)...\n", *inputFile, fileSize)
 
-	// Create a scanner to read the file line by line
-	scanner := bufio.NewScanner(file)
-
 	// Use a map to track unique pubkeys
 	pubkeys := make(map[string]bool)
 
@@ -68,13 +67,33 @@ func main() {
 	validPubkeyCount := 0
 	invalidPubkeyCount := 0
 
+	// Create a reader with a large buffer (10MB)
+	reader := bufio.NewReaderSize(file, 10*1024*1024)
+	
 	// Process each line
-	for scanner.Scan() {
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			fmt.Printf("Error reading line: %v\n", err)
+			os.Exit(1)
+		}
+		
 		lineCount++
+		
+		// Trim whitespace and newlines
+		line = bytes.TrimSpace(line)
+		
+		// Skip empty lines
+		if len(line) == 0 {
+			continue
+		}
 
 		// Parse the JSON
 		var event NostrEvent
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+		if err := json.Unmarshal(line, &event); err != nil {
 			// Skip invalid JSON
 			continue
 		}
@@ -91,12 +110,6 @@ func main() {
 		if lineCount%100000 == 0 {
 			fmt.Printf("Processed %d lines, found %d valid pubkeys.\n", lineCount, len(pubkeys))
 		}
-	}
-
-	// Check for scanner errors
-	if err := scanner.Err(); err != nil {
-		fmt.Printf("Error reading file: %v\n", err)
-		os.Exit(1)
 	}
 
 	// Convert the map to a sorted slice
