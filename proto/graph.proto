@@ -1,0 +1,70 @@
+syntax = "proto3";
+
+package graph;
+
+option go_package = "nostr-follow-graph/proto";
+
+// GraphService provides operations for a graph database of follow relationships
+service GraphService {
+  // StoreFollow stores a follow relationship
+  rpc StoreFollow(StoreFollowRequest) returns (StoreFollowResponse);
+  
+  // GetFollowing gets all pubkeys that a user is following
+  rpc GetFollowing(GetFollowingRequest) returns (GetFollowingResponse);
+  
+  // GetFollowers gets all pubkeys that follow a user
+  rpc GetFollowers(GetFollowersRequest) returns (GetFollowersResponse);
+  
+  // Reset resets the database
+  rpc Reset(ResetRequest) returns (ResetResponse);
+  
+  // Ping checks if the server is responsive
+  rpc Ping(PingRequest) returns (PingResponse);
+}
+
+// StoreFollowRequest is the request for StoreFollow
+message StoreFollowRequest {
+  string follower = 1;
+  string followed = 2;
+}
+
+// StoreFollowResponse is the response for StoreFollow
+message StoreFollowResponse {
+  bool success = 1;
+}
+
+// GetFollowingRequest is the request for GetFollowing
+message GetFollowingRequest {
+  string pubkey = 1;
+}
+
+// GetFollowingResponse is the response for GetFollowing
+message GetFollowingResponse {
+  repeated string pubkeys = 1;
+}
+
+// GetFollowersRequest is the request for GetFollowers
+message GetFollowersRequest {
+  string pubkey = 1;
+}
+
+// GetFollowersResponse is the response for GetFollowers
+message GetFollowersResponse {
+  repeated string pubkeys = 1;
+}
+
+// ResetRequest is the request for Reset
+message ResetRequest {}
+
+// ResetResponse is the response for Reset
+message ResetResponse {
+  bool success = 1;
+}
+
+// PingRequest is the request for Ping
+message PingRequest {}
+
+// PingResponse is the response for Ping
+message PingResponse {
+  bool success = 1;
+}
