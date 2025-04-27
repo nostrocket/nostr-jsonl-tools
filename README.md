@@ -11,6 +11,8 @@ Nostr (Notes and Other Stuff Transmitted by Relays) is a simple, open protocol t
 - **content-extractor**: Extract and store content from specific authors in a SQLite database
 - **event-filter**: Filter events by author pubkey and save to a new JSONL file
 - **event-splitter**: Split events into separate JSONL files by author pubkey
+- **event-radix-sorter**: Sort events using a radix sort algorithm for improved performance
+- **line-counter**: Count lines in files with support for directories and filtering
 - **dedup**: Remove duplicate pubkeys from a list
 
 ## Project Structure
@@ -23,6 +25,8 @@ Nostr (Notes and Other Stuff Transmitted by Relays) is a simple, open protocol t
 │   ├── content-extractor/ # Tool for extracting content from specific pubkeys
 │   ├── event-filter/     # Tool for filtering events by author pubkey
 │   ├── event-splitter/   # Tool for splitting events into files by author
+│   ├── event-radix-sorter/ # Tool for sorting events using radix sort algorithm
+│   ├── line-counter/     # Tool for counting lines in files
 │   └── dedup/            # Tool for deduplicating pubkey lists
 ├── pkg/
 │   └── nostr/            # Core functionality for Nostr follow graph
@@ -52,6 +56,8 @@ go build -o extract-pubkeys ./cmd/extract-pubkeys
 go build -o content-extractor ./cmd/content-extractor
 go build -o event-filter ./cmd/event-filter
 go build -o event-splitter ./cmd/event-splitter
+go build -o event-radix-sorter ./cmd/event-radix-sorter
+go build -o line-counter ./cmd/line-counter
 go build -o dedup ./cmd/dedup
 ```
 
@@ -109,6 +115,9 @@ for author in authors/*.jsonl; do
   # Process each author file separately
   echo "Processing $author"
 done
+
+# Sort events by author pubkey
+./event-radix-sorter -file events.jsonl -output sorted-events.jsonl
 ```
 
 ## Tool Documentation
@@ -225,6 +234,69 @@ The tool:
 - Provides progress statistics during processing
 - Shows top authors by event count at the end
 
+### Event Radix Sorter Tool
+
+The event-radix-sorter tool sorts Nostr events in a JSONL file by author pubkey using a radix sort algorithm.
+
+```bash
+./event-radix-sorter -file <jsonl_file> [-output <output_file>] [-temp-dir <directory>] [-workers <count>] [-max-passes <count>] [-skip-count] [-debug]
+```
+
+Where:
+- `<jsonl_file>` is the path to a JSONL file containing Nostr events
+- `-output` (optional) specifies the output file (defaults to input-sorted.jsonl if not provided)
+- `-temp-dir` (optional) specifies the directory to use for temporary files during sorting (default: temp-sort)
+- `-workers` (optional) specifies the number of worker goroutines (default: number of CPU cores)
+- `-max-passes` (optional) specifies the maximum number of passes to perform (default: 64)
+- `-skip-count` (optional) skips counting total events (faster but no percentage progress)
+- `-debug` (optional) enables debug output
+
+The tool:
+- Sorts events by author pubkey using a radix sort algorithm
+- Processes the pubkey bits in multiple passes
+- Uses bucketing to efficiently sort very large datasets
+- Handles large events (>8MB) separately
+- Provides progress statistics during processing
+- Cleans up temporary files when done
+- Stores all temporary files in the specified temp directory
+
+### Examples
+
+```bash
+# Sort events using radix sort algorithm
+./event-radix-sorter -file events.jsonl -output radix-sorted.jsonl
+
+# Skip counting events for faster startup with large files
+./event-radix-sorter -file large-events.jsonl -skip-count
+
+# Use custom number of worker threads and temp directory
+./event-radix-sorter -file events.jsonl -workers 8 -temp-dir /tmp/radix-temp
+```
+
+### Line Counter Tool
+
+The line-counter tool counts the number of lines in files and directories with various filtering options.
+
+```bash
+./line-counter -path <file_or_directory> [-recursive] [-workers <num>] [-sort <none|name|lines|size>] [-include <pattern>] [-exclude <pattern>]
+```
+
+Where:
+- `<file_or_directory>` is the path to a file or directory to count lines in
+- `-recursive` (optional) recursively counts lines in subdirectories
+- `-workers` (optional) specifies the number of worker goroutines for parallel processing (default: 4)
+- `-sort` (optional) sorts the output by name, lines, or size (default: none)
+- `-include` (optional) only includes files matching the specified pattern (e.g., "*.jsonl")
+- `-exclude` (optional) excludes files matching the specified pattern (e.g., "*.git*")
+
+The tool:
+- Counts lines in a single file or all files in a directory
+- Supports recursive directory traversal
+- Uses parallel processing for better performance
+- Provides filtering options to include/exclude files by pattern
+- Displays detailed statistics including line counts and file sizes
+- Shows a summary of total lines and size
+
 ### Deduplication Tool
 
 The deduplication tool removes duplicate pubkeys from a line-separated list file:
@@ -293,6 +365,35 @@ Where:
 ./event-splitter -file events.jsonl -output-dir split-events
 ```
 
+### Event Radix Sorter Tool
+
+```bash
+# Sort events using radix sort algorithm
+./event-radix-sorter -file events.jsonl -output radix-sorted.jsonl
+
+# Skip counting events for faster startup with large files
+./event-radix-sorter -file large-events.jsonl -skip-count
+
+# Use custom number of worker threads and temp directory
+./event-radix-sorter -file events.jsonl -workers 8 -temp-dir /tmp/radix-temp
+```
+
+### Line Counter Tool
+
+```bash
+# Count lines in a single file
+./line-counter -path events.jsonl
+
+# Count lines in all JSONL files in a directory
+./line-counter -path authors/ -include "*.jsonl"
+
+# Count lines recursively and sort by line count (largest first)
+./line-counter -path authors/ -recursive -sort lines
+
+# Count lines using 8 worker threads and exclude certain files
+./line-counter -path data/ -recursive -workers 8 -exclude "*.tmp"
+```
+
 ### Deduplication Tool
 
 ```bash
@@ -305,8 +406,8 @@ Where:
 - All tools are designed to handle large JSONL files efficiently
 - Each tool uses a 10MB buffer for reading files to handle large events
 - Progress reporting is provided for long-running operations
-- The content-extractor uses SQLite transactions for better performance
-- Deduplication is performed using maps for O(1) lookup time
+- The event-radix-sorter provides an efficient sorting algorithm for very large datasets
+- All tools that create temporary files (event-radix-sorter) ensure they only use disk space in the specified target directory
 
 ## Contributing
 
