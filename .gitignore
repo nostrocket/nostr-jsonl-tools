@@ -1,0 +1,82 @@
+# Nostr data files
+*.jsonl
+*.json
+!package.json
+!package-lock.json
+!go.json
+!go.sum
+!go.mod
+!*.config.json
+!tsconfig.json
+
+# Large text files
+*.txt
+!requirements.txt
+!LICENSE.txt
+!README.txt
+
+# Binary files
+*.bin
+*.dat
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary directories
+temp/
+temp-*/
+tmp/
+
+# Output directories
+events-by-author/
+output/
+
+# macOS specific files
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# macOS directories
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+.AppleDouble
+.LSOverride
+
+# Go specific
+/bin/
+/pkg/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+
+# Editor directories and files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Compiled Object files, Static and Dynamic libs
+*.o
+*.a
+
+# Debug files
+debug/
+*.log
