@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -30,6 +31,21 @@ type RadixBucket struct {
 	EventsLen int
 }
 
+// SortState represents the current state of the sorting process for resumption
+type SortState struct {
+	InputFile       string `json:"input_file"`
+	OutputFile      string `json:"output_file"`
+	TempDir         string `json:"temp_dir"`
+	CurrentPass     int    `json:"current_pass"`
+	TotalPasses     int    `json:"total_passes"`
+	ProcessedEvents int    `json:"processed_events"`
+	TotalEvents     int    `json:"total_events"`
+	PubkeyLength    int    `json:"pubkey_length"`
+	MaxPasses       int    `json:"max_passes"`
+	StartTime       string `json:"start_time"`
+	LastUpdated     string `json:"last_updated"`
+}
+
 const (
 	// Maximum events to hold in memory for a bucket before flushing to disk
 	maxBucketSize = 100000
@@ -39,6 +55,8 @@ const (
 	maxOpenBuckets = 100
 	// Maximum event size before writing directly to file
 	maxEventSize = 8 * 1024 * 1024 // 8MB
+	// State file name for resuming
+	stateFileName = "sort_state.json"
 )
 
 func main() {
@@ -50,18 +68,86 @@ func main() {
 	workers := flag.Int("workers", runtime.NumCPU(), "Number of worker goroutines")
 	debug := flag.Bool("debug", false, "Enable debug output")
 	maxPasses := flag.Int("max-passes", 64, "Maximum number of passes to perform (default: 64)")
+	resume := flag.Bool("resume", false, "Resume sorting from the last saved state")
 	flag.Parse()
 
-	// Validate input file
-	if *inputFile == "" {
-		fmt.Println("Error: Input file is required")
-		flag.Usage()
-		os.Exit(1)
-	}
-
-	// Set default output file if not specified
-	if *outputFile == "" {
-		*outputFile = *inputFile + "-sorted.jsonl"
+	// Check if we should resume from a previous state
+	var state *SortState
+	var err error
+	if *resume {
+		// First try to load from state file
+		state, err = loadSortState(*tempDir)
+		if err != nil {
+			fmt.Printf("State file not found or invalid: %v\n", err)
+			fmt.Printf("Attempting to detect sort state from directory structure...\n")
+			
+			// Try to detect the state from directory structure
+			state, err = detectSortStateFromDirs(*tempDir)
+			if err != nil {
+				fmt.Printf("Error detecting sort state: %v\n", err)
+				
+				// If input file is provided, we can still try to resume with minimal information
+				if *inputFile != "" {
+					fmt.Printf("Using provided input file to resume: %s\n", *inputFile)
+					lastPass, err := detectLastCompletedPass(*tempDir)
+					if err != nil {
+						fmt.Printf("Could not detect last completed pass: %v\n", err)
+						fmt.Println("Cannot resume sorting. Please start a new sort process.")
+						os.Exit(1)
+					}
+					
+					// Create minimal state
+					state = &SortState{
+						InputFile:   *inputFile,
+						OutputFile:  *outputFile,
+						TempDir:     *tempDir,
+						CurrentPass: lastPass + 1,
+						MaxPasses:   *maxPasses,
+					}
+				} else {
+					fmt.Println("Cannot resume sorting. Please provide at least the input file with -file flag.")
+					os.Exit(1)
+				}
+			}
+		}
+		
+		// Override command line arguments with saved/detected state
+		if state.InputFile != "" {
+			*inputFile = state.InputFile
+		}
+		
+		if state.OutputFile != "" {
+			*outputFile = state.OutputFile
+		} else if *outputFile == "" && *inputFile != "" {
+			*outputFile = *inputFile + "-sorted.jsonl"
+		}
+		
+		*tempDir = state.TempDir
+		
+		if state.MaxPasses > 0 {
+			*maxPasses = state.MaxPasses
+		}
+		
+		fmt.Printf("Resuming sort from pass %d\n", state.CurrentPass+1)
+		fmt.Printf("Input file: %s\n", *inputFile)
+		fmt.Printf("Output file: %s\n", *outputFile)
+		fmt.Printf("Temp directory: %s\n", *tempDir)
+		
+		if state.ProcessedEvents > 0 {
+			fmt.Printf("Processed events so far: %d\n", state.ProcessedEvents)
+		}
+	} else {
+		// Validate input file for new sorts
+		if *inputFile == "" {
+			fmt.Println("Error: Input file is required unless resuming")
+			flag.Usage()
+			os.Exit(1)
+		}
+		
+		// Set default output file if not specified
+		if *outputFile == "" {
+			*outputFile = *inputFile + "-sorted.jsonl"
+		}
 	}
 
 	// Get file size for progress reporting
@@ -91,7 +177,7 @@ func main() {
 
 	// Count total valid events for progress reporting
 	var totalEvents int
-	if !*skipCount {
+	if !*skipCount && (state == nil || state.TotalEvents == 0) {
 		var err error
 		totalEvents, err = countValidEvents(*inputFile)
 		if err != nil {
@@ -99,6 +185,8 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("Found %d valid events to sort\n", totalEvents)
+	} else if state != nil && state.TotalEvents > 0 {
+		totalEvents = state.TotalEvents
 	}
 
 	// Set up the large events file in the temp directory, not the output directory
@@ -107,9 +195,19 @@ func main() {
 
 	// Perform the radix sort
 	startTime := time.Now()
-	processedEvents, err := radixSort(*inputFile, *outputFile, *tempDir, *workers, totalEvents, largeEventsFile, *debug, *maxPasses)
+	if state != nil && state.StartTime != "" {
+		// Parse the saved start time
+		parsedTime, err := time.Parse(time.RFC3339, state.StartTime)
+		if err == nil {
+			startTime = parsedTime
+		}
+	}
+	
+	processedEvents, err := radixSort(*inputFile, *outputFile, *tempDir, *workers, totalEvents, largeEventsFile, *debug, *maxPasses, *resume, state)
 	if err != nil {
 		fmt.Printf("Error during sorting: %v\n", err)
+		// Don't clean up temp directory on error to allow resuming
+		fmt.Printf("Temporary files preserved in %s for possible resume\n", *tempDir)
 		os.Exit(1)
 	}
 
@@ -210,9 +308,19 @@ func countValidEvents(inputFile string) (int, error) {
 }
 
 // radixSort performs an external radix sort on the input file
-func radixSort(inputFile, outputFile, tempDir string, workers, totalEvents int, largeEventsFile string, debug bool, maxPasses int) (int, error) {
+func radixSort(inputFile, outputFile, tempDir string, workers, totalEvents int, largeEventsFile string, debug bool, maxPasses int, resume bool, state *SortState) (int, error) {
 	// Create a file for large events
-	largeEvents, err := os.OpenFile(largeEventsFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	var largeEvents *os.File
+	var err error
+	
+	if resume && state != nil {
+		// Append to existing large events file
+		largeEvents, err = os.OpenFile(largeEventsFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	} else {
+		// Create new large events file
+		largeEvents, err = os.OpenFile(largeEventsFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	}
+	
 	if err != nil {
 		return 0, fmt.Errorf("error creating large events file: %w", err)
 	}
@@ -243,12 +351,68 @@ func radixSort(inputFile, outputFile, tempDir string, workers, totalEvents int, 
 	var currentPassDir string
 	var nextPassDir string
 
-	// First pass reads from the input file
-	currentInput := inputFile
+	// Determine starting point
+	var startPass int
+	var currentInput string
+	var finalEventCount int
+	
+	if resume && state != nil {
+		startPass = state.CurrentPass
+		finalEventCount = state.ProcessedEvents
+		
+		// Find the input file for the current pass
+		if startPass == 0 {
+			currentInput = inputFile
+		} else {
+			// Check if the next pass directory exists
+			nextPassDir = filepath.Join(tempDir, fmt.Sprintf("pass-%d", startPass))
+			nextInputFile := filepath.Join(nextPassDir, "input.jsonl")
+			
+			if _, err := os.Stat(nextInputFile); err == nil {
+				currentInput = nextInputFile
+				fmt.Printf("Resuming from input file: %s\n", currentInput)
+			} else {
+				// If not found, use the previous pass output
+				prevPassDir := filepath.Join(tempDir, fmt.Sprintf("pass-%d", startPass-1))
+				prevOutputFile := filepath.Join(prevPassDir, "output.jsonl")
+				
+				if _, err := os.Stat(prevOutputFile); err == nil {
+					currentInput = prevOutputFile
+					fmt.Printf("Resuming from previous pass output: %s\n", currentInput)
+				} else {
+					// Try to find any intermediate file that might be useful
+					intermediateFile := findLatestIntermediateFile(tempDir)
+					if intermediateFile != "" {
+						currentInput = intermediateFile
+						fmt.Printf("Resuming from intermediate file: %s\n", intermediateFile)
+						
+						// Determine the pass from the file path
+						if strings.Contains(intermediateFile, "pass-") {
+							passDir := filepath.Dir(intermediateFile)
+							passDirName := filepath.Base(passDir)
+							if strings.HasPrefix(passDirName, "pass-") {
+								if passNum, err := strconv.Atoi(passDirName[5:]); err == nil {
+									startPass = passNum
+									fmt.Printf("Detected pass number: %d\n", startPass)
+								}
+							}
+						}
+					} else {
+						// Fall back to the original input file
+						currentInput = inputFile
+						startPass = 0
+						fmt.Printf("Could not find intermediate files, starting from the beginning\n")
+					}
+				}
+			}
+		}
+	} else {
+		startPass = 0
+		currentInput = inputFile
+	}
 
 	// Process each pass
-	var finalEventCount int
-	for pass := 0; pass < passes; pass++ {
+	for pass := startPass; pass < passes; pass++ {
 		passStartTime := time.Now()
 		fmt.Printf("Starting pass %d/%d...\n", pass+1, passes)
 
@@ -272,6 +436,25 @@ func radixSort(inputFile, outputFile, tempDir string, workers, totalEvents int, 
 			nextOutput = filepath.Join(nextPassDir, "input.jsonl")
 		}
 
+		// Save the current state before processing the pass
+		newState := SortState{
+			InputFile:       inputFile,
+			OutputFile:      outputFile,
+			TempDir:         tempDir,
+			CurrentPass:     pass,
+			TotalPasses:     passes,
+			ProcessedEvents: finalEventCount,
+			TotalEvents:     totalEvents,
+			PubkeyLength:    pubkeyLength,
+			MaxPasses:       maxPasses,
+			StartTime:       time.Now().Format(time.RFC3339),
+			LastUpdated:     time.Now().Format(time.RFC3339),
+		}
+		
+		if err := saveSortState(tempDir, &newState); err != nil {
+			fmt.Printf("Warning: Failed to save sort state: %v\n", err)
+		}
+
 		// Process this pass
 		var passEvents int
 		passEvents, err := processPass(currentInput, nextOutput, currentPassDir, pass, pubkeyLength, workers, totalEvents, largeEvents, largeEventsMutex, &largeEventCount, debug)
@@ -285,8 +468,9 @@ func radixSort(inputFile, outputFile, tempDir string, workers, totalEvents int, 
 		}
 
 		// Clean up the previous pass directory if it's not the input file directory
-		if pass > 0 {
-			prevPassDir := filepath.Join(tempDir, fmt.Sprintf("pass-%d", pass-1))
+		// Only clean up if we're not in resume mode or if we're more than 2 passes ahead
+		if pass > 1 && (!resume || (pass-startPass) > 2) {
+			prevPassDir := filepath.Join(tempDir, fmt.Sprintf("pass-%d", pass-2))
 			os.RemoveAll(prevPassDir)
 		}
 
@@ -310,6 +494,15 @@ func radixSort(inputFile, outputFile, tempDir string, workers, totalEvents int, 
 			} else {
 				fmt.Printf("Output file successfully created: %s\n", outputFile)
 			}
+		}
+		
+		// Update the state after completing the pass
+		newState.ProcessedEvents = passEvents
+		newState.CurrentPass = pass + 1
+		newState.LastUpdated = time.Now().Format(time.RFC3339)
+		
+		if err := saveSortState(tempDir, &newState); err != nil {
+			fmt.Printf("Warning: Failed to update sort state: %v\n", err)
 		}
 	}
 
@@ -342,6 +535,10 @@ func radixSort(inputFile, outputFile, tempDir string, workers, totalEvents int, 
 	}
 
 	fmt.Printf("Final count: %d events in output file\n", events)
+	
+	// Clean up the state file after successful completion
+	stateFilePath := filepath.Join(tempDir, stateFileName)
+	os.Remove(stateFilePath)
 
 	return events, nil
 }
@@ -612,6 +809,218 @@ func processPass(inputFile, outputFile, tempDir string, pass, pubkeyLength, work
 	}
 
 	return processedEvents, nil
+}
+
+// saveSortState saves the current sorting state to a file for resumption
+func saveSortState(tempDir string, state *SortState) error {
+	// Create the state file
+	stateFilePath := filepath.Join(tempDir, stateFileName)
+	
+	// Marshal the state to JSON
+	stateData, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return fmt.Errorf("error marshaling sort state: %w", err)
+	}
+	
+	// Write the state to file
+	if err := os.WriteFile(stateFilePath, stateData, 0644); err != nil {
+		return fmt.Errorf("error writing sort state file: %w", err)
+	}
+	
+	return nil
+}
+
+// loadSortState loads the sorting state from a file
+func loadSortState(tempDir string) (*SortState, error) {
+	// Check if the state file exists
+	stateFilePath := filepath.Join(tempDir, stateFileName)
+	if _, err := os.Stat(stateFilePath); err != nil {
+		return nil, fmt.Errorf("state file not found: %w", err)
+	}
+	
+	// Read the state file
+	stateData, err := os.ReadFile(stateFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("error reading state file: %w", err)
+	}
+	
+	// Unmarshal the state
+	var state SortState
+	if err := json.Unmarshal(stateData, &state); err != nil {
+		return nil, fmt.Errorf("error parsing state file: %w", err)
+	}
+	
+	return &state, nil
+}
+
+// detectSortStateFromDirs attempts to reconstruct the sort state from the directory structure
+func detectSortStateFromDirs(tempDir string) (*SortState, error) {
+	// Check if the temp directory exists
+	if _, err := os.Stat(tempDir); err != nil {
+		return nil, fmt.Errorf("temp directory not found: %w", err)
+	}
+	
+	// Find the last completed pass
+	lastPass, err := detectLastCompletedPass(tempDir)
+	if err != nil {
+		return nil, fmt.Errorf("could not detect last completed pass: %w", err)
+	}
+	
+	// Try to find the input file from bucket files
+	var inputFile string
+	var outputFile string
+	
+	// Look for any metadata files that might contain the input/output paths
+	metadataFiles, err := filepath.Glob(filepath.Join(tempDir, "*.json"))
+	if err == nil && len(metadataFiles) > 0 {
+		// Try to extract information from any JSON files in the temp directory
+		for _, file := range metadataFiles {
+			data, err := os.ReadFile(file)
+			if err != nil {
+				continue
+			}
+			
+			var metadata map[string]interface{}
+			if err := json.Unmarshal(data, &metadata); err != nil {
+				continue
+			}
+			
+			// Look for input file path
+			if input, ok := metadata["input_file"].(string); ok && input != "" {
+				inputFile = input
+			}
+			
+			// Look for output file path
+			if output, ok := metadata["output_file"].(string); ok && output != "" {
+				outputFile = output
+			}
+			
+			// If we found both, we can stop
+			if inputFile != "" && outputFile != "" {
+				break
+			}
+		}
+	}
+	
+	// If we couldn't find the input file, try to infer it from bucket files
+	if inputFile == "" {
+		// Look for any JSONL files in the temp directory that might be the input
+		jsonlFiles, err := filepath.Glob(filepath.Join(tempDir, "*.jsonl"))
+		if err == nil && len(jsonlFiles) > 0 {
+			// Use the first JSONL file as a potential input
+			for _, file := range jsonlFiles {
+				// Skip files that are clearly part of the sorting process
+				if strings.Contains(file, "bucket-") || strings.Contains(file, "large_events") {
+					continue
+				}
+				
+				inputFile = file
+				break
+			}
+		}
+	}
+	
+	// Create the state with what we know
+	state := &SortState{
+		InputFile:   inputFile,
+		OutputFile:  outputFile,
+		TempDir:     tempDir,
+		CurrentPass: lastPass + 1, // Resume from the next pass
+		MaxPasses:   64,           // Default max passes
+	}
+	
+	return state, nil
+}
+
+// detectLastCompletedPass scans the temp directory to find the last completed pass
+func detectLastCompletedPass(tempDir string) (int, error) {
+	// Find all pass directories
+	var passes []int
+	
+	entries, err := os.ReadDir(tempDir)
+	if err != nil {
+		return -1, fmt.Errorf("error reading temp directory: %w", err)
+	}
+	
+	for _, entry := range entries {
+		if entry.IsDir() && len(entry.Name()) > 5 && entry.Name()[:5] == "pass-" {
+			// Extract the pass number
+			passStr := entry.Name()[5:]
+			passNum, err := strconv.Atoi(passStr)
+			if err == nil {
+				passes = append(passes, passNum)
+			}
+		}
+	}
+	
+	if len(passes) == 0 {
+		return -1, fmt.Errorf("no pass directories found")
+	}
+	
+	// Find the highest pass number
+	sort.Ints(passes)
+	lastPass := passes[len(passes)-1]
+	
+	// Check if this pass has an input.jsonl file
+	lastPassDir := filepath.Join(tempDir, fmt.Sprintf("pass-%d", lastPass))
+	inputFile := filepath.Join(lastPassDir, "input.jsonl")
+	
+	if _, err := os.Stat(inputFile); err == nil {
+		// This pass has started
+		return lastPass, nil
+	}
+	
+	// If not, check the previous pass
+	if len(passes) > 1 {
+		prevPass := passes[len(passes)-2]
+		prevPassDir := filepath.Join(tempDir, fmt.Sprintf("pass-%d", prevPass))
+		outputFile := filepath.Join(prevPassDir, "output.jsonl")
+		
+		if _, err := os.Stat(outputFile); err == nil {
+			// Previous pass completed
+			return prevPass, nil
+		}
+	}
+	
+	// If we couldn't determine conclusively, just return the highest pass we found
+	// and let the resume logic figure out the correct files
+	return lastPass, nil
+}
+
+// findLatestIntermediateFile finds the most recent intermediate file in the temp directory
+func findLatestIntermediateFile(tempDir string) string {
+	var latestFile string
+	var latestTime time.Time
+	
+	// Walk through the temp directory
+	filepath.Walk(tempDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		
+		// Skip directories
+		if info.IsDir() {
+			return nil
+		}
+		
+		// Look for JSONL files
+		if strings.HasSuffix(path, ".jsonl") {
+			// Skip the large events file
+			if strings.Contains(path, "large_events") {
+				return nil
+			}
+			
+			// Check if this file is newer than our current latest
+			if latestFile == "" || info.ModTime().After(latestTime) {
+				latestFile = path
+				latestTime = info.ModTime()
+			}
+		}
+		
+		return nil
+	})
+	
+	return latestFile
 }
 
 // writeEventToFile writes an event directly to a file without using buffers
